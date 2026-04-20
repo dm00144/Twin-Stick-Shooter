@@ -24,7 +24,14 @@ public class EnemyAI : MonoBehaviour
     [SerializeField] private float moveSpeed = 5.5f;
     [SerializeField] private float turnSpeed = 360f;
     [SerializeField] private float preferredDistance = 26f;
+    [SerializeField] private float lateralSpeed = 5f;
+    [SerializeField] private float radialCorrectionStrength = 0.35f;
+    [SerializeField] private float strafeDirectionChangeInterval = 3.5f;
+    [SerializeField] private float lateralWobbleStrength = 1.5f;
+    [SerializeField] private float lateralWobbleFrequency = 1.3f;
     [SerializeField] private float gravityAcceleration = 6f;
+    [SerializeField] private float separationRadius = 12f;
+    [SerializeField] private float separationStrength = 10f;
 
     [Header("Combat")]
     [SerializeField] private int hitPoints = 1;
@@ -51,6 +58,9 @@ public class EnemyAI : MonoBehaviour
     private bool isDead;
     private SpriteRenderer spriteRenderer;
     private int attackPatternIndex;
+    private int strafeDirection = 1;
+    private float nextStrafeDirectionChangeTime;
+    private float lateralWobbleOffset;
 
     public static int ActiveEnemyCount => activeEnemyCount;
     public static bool BossAlive => bossAlive;
@@ -75,6 +85,7 @@ public class EnemyAI : MonoBehaviour
 
         // Presets for enemy clases
         ApplyVariantPreset();
+        ConfigureStrafeMovement();
 
         EnsureSpawnTemplateExists();
 
@@ -114,10 +125,29 @@ public class EnemyAI : MonoBehaviour
         float nextAngle = Mathf.MoveTowardsAngle(rb.rotation, targetAngle, turnSpeed * Time.fixedDeltaTime);
         rb.MoveRotation(nextAngle);
 
-        // Stay near the preferred band around the player rather than bee-lining all the time.
         float distanceError = distanceToPlayer - preferredDistance;
-        var moveDirection = Mathf.Abs(distanceError) < 3f ? 0f : Mathf.Sign(distanceError);
-        rb.linearVelocity = aim * (moveSpeed * moveDirection);
+        Vector2 desiredVelocity;
+
+        if (variant == EnemyVariant.Boss)
+        {
+            // Bosses should feel heavy and direct instead of drifting like UFO fighters.
+            var moveDirection = Mathf.Abs(distanceError) < 3f ? 0f : Mathf.Sign(distanceError);
+            desiredVelocity = aim * (moveSpeed * moveDirection);
+        }
+        else
+        {
+            MaybeChangeStrafeDirection();
+
+            // Slide laterally like a UFO while softly correcting back toward a comfortable range.
+            Vector2 lateralDirection = new Vector2(-aim.y, aim.x) * strafeDirection;
+            float wobble = Mathf.Sin((Time.time + lateralWobbleOffset) * lateralWobbleFrequency) * lateralWobbleStrength;
+            float radialSpeed = Mathf.Clamp(distanceError * radialCorrectionStrength, -moveSpeed, moveSpeed);
+            desiredVelocity = lateralDirection * (lateralSpeed + wobble);
+            desiredVelocity += aim * radialSpeed;
+        }
+
+        desiredVelocity += GetSeparationVelocity();
+        rb.linearVelocity = Vector2.ClampMagnitude(desiredVelocity, moveSpeed);
         rb.linearVelocity += Vector2.down * gravityAcceleration * Time.fixedDeltaTime;
 
         if (Time.time >= nextFireTime && distanceToPlayer <= maxSpawnDistance)
@@ -138,7 +168,7 @@ public class EnemyAI : MonoBehaviour
             isDead = true;
             ScoreTracker.Add(scoreValue);
             if (variant == EnemyVariant.Boss)
-                GameFlowManager.TriggerVictory();
+                StageProgression.HandleBossDestroyed();
             Destroy(gameObject);
         }
     }
@@ -158,10 +188,31 @@ public class EnemyAI : MonoBehaviour
             return;
 
         var playerMovement = collision.collider.GetComponent<PlayerMovement>();
-        if (playerMovement == null)
+        if (playerMovement != null)
+            playerMovement.TakeHit();
+        else
+        {
+            var ally = collision.collider.GetComponent<AllyPlane>();
+            if (ally == null)
+                return;
+
+            ally.TakeHit();
+        }
+
+        if (variant != EnemyVariant.Boss)
+            Destroy(gameObject);
+    }
+
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (!GameFlowManager.IsGameplayActive)
             return;
 
-        playerMovement.TakeHit();
+        var ally = other.GetComponent<AllyPlane>();
+        if (ally == null)
+            return;
+
+        ally.TakeHit();
 
         if (variant != EnemyVariant.Boss)
             Destroy(gameObject);
@@ -258,6 +309,22 @@ public class EnemyAI : MonoBehaviour
         return true;
     }
 
+    public static void DestroyAllActiveEnemies()
+    {
+        EnemyAI[] enemies = FindObjectsByType<EnemyAI>(FindObjectsSortMode.None);
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            if (enemies[i] == null || enemies[i] == spawnTemplate)
+                continue;
+
+            Destroy(enemies[i].gameObject);
+        }
+
+        activeEnemyCount = 0;
+        bossSpawned = false;
+        bossAlive = false;
+    }
+
     public static bool TrySpawnBoss(Transform playerTransform)
     {
         if (spawnTemplate == null || playerTransform == null || bossSpawned)
@@ -325,7 +392,14 @@ public class EnemyAI : MonoBehaviour
                 moveSpeed = 3.8f;
                 turnSpeed = 240f;
                 preferredDistance = 38f;
+                lateralSpeed = 3.2f;
+                radialCorrectionStrength = 0.22f;
+                strafeDirectionChangeInterval = 8f;
+                lateralWobbleStrength = 0.6f;
+                lateralWobbleFrequency = 0.6f;
                 gravityAcceleration = 5f;
+                separationRadius = 16f;
+                separationStrength = 12f;
                 hitPoints = 2;
                 bulletSpeed = 52f;
                 fireCooldown = 4.2f;
@@ -341,7 +415,14 @@ public class EnemyAI : MonoBehaviour
                 moveSpeed = 35f;
                 turnSpeed = 640f;
                 preferredDistance = 5f;
+                lateralSpeed = 28f;
+                radialCorrectionStrength = 1.7f;
+                strafeDirectionChangeInterval = 3.2f;
+                lateralWobbleStrength = 2.5f;
+                lateralWobbleFrequency = 1.4f;
                 gravityAcceleration = 7f;
+                separationRadius = 24f;
+                separationStrength = 32f;
                 hitPoints = 4;
                 bulletSpeed = 90f;
                 fireCooldown = .3f;
@@ -357,7 +438,14 @@ public class EnemyAI : MonoBehaviour
                 moveSpeed = 30f;
                 turnSpeed = 180f;
                 preferredDistance = 20f;
+                lateralSpeed = 18f;
+                radialCorrectionStrength = 0.8f;
+                strafeDirectionChangeInterval = 5f;
+                lateralWobbleStrength = 0f;
+                lateralWobbleFrequency = 0f;
                 gravityAcceleration = 4f;
+                separationRadius = 30f;
+                separationStrength = 18f;
                 hitPoints = 60;
                 bulletSpeed = 180f;
                 fireCooldown = 0.35f;
@@ -374,7 +462,14 @@ public class EnemyAI : MonoBehaviour
                 moveSpeed = 5.5f;
                 turnSpeed = 360f;
                 preferredDistance = 26f;
+                lateralSpeed = 4.8f;
+                radialCorrectionStrength = 0.32f;
+                strafeDirectionChangeInterval = 7f;
+                lateralWobbleStrength = 0.8f;
+                lateralWobbleFrequency = 0.75f;
                 gravityAcceleration = 6f;
+                separationRadius = 12f;
+                separationStrength = 10f;
                 hitPoints = 1;
                 bulletSpeed = 60f;
                 fireCooldown = 3.4f;
@@ -389,6 +484,52 @@ public class EnemyAI : MonoBehaviour
         }
 
         nextFireTime = Time.time + fireStartDelay;
+    }
+
+    private void ConfigureStrafeMovement()
+    {
+        strafeDirection = Random.value < 0.5f ? -1 : 1;
+        lateralWobbleOffset = Random.Range(0f, Mathf.PI * 2f);
+        nextStrafeDirectionChangeTime = Time.time + Random.Range(
+            strafeDirectionChangeInterval * 0.65f,
+            strafeDirectionChangeInterval * 1.35f);
+    }
+
+    private void MaybeChangeStrafeDirection()
+    {
+        if (strafeDirectionChangeInterval <= 0f || Time.time < nextStrafeDirectionChangeTime)
+            return;
+
+        strafeDirection *= -1;
+        nextStrafeDirectionChangeTime = Time.time + Random.Range(
+            strafeDirectionChangeInterval * 0.75f,
+            strafeDirectionChangeInterval * 1.35f);
+    }
+
+    private Vector2 GetSeparationVelocity()
+    {
+        if (separationRadius <= 0f || separationStrength <= 0f)
+            return Vector2.zero;
+
+        Vector2 separation = Vector2.zero;
+        Collider2D[] nearbyColliders = Physics2D.OverlapCircleAll(transform.position, separationRadius);
+
+        for (int i = 0; i < nearbyColliders.Length; i++)
+        {
+            EnemyAI otherEnemy = nearbyColliders[i].GetComponent<EnemyAI>();
+            if (otherEnemy == null || otherEnemy == this || otherEnemy.isDead)
+                continue;
+
+            Vector2 awayFromOther = (Vector2)(transform.position - otherEnemy.transform.position);
+            float distance = awayFromOther.magnitude;
+            if (distance <= 0.01f)
+                continue;
+
+            float closeness = 1f - Mathf.Clamp01(distance / separationRadius);
+            separation += awayFromOther.normalized * closeness;
+        }
+
+        return separation * separationStrength;
     }
 
     private void TintSprite(Color color)
@@ -523,7 +664,7 @@ public class EnemySpawnDirector : MonoBehaviour
         if (player == null)
             return;
 
-        if (!EnemyAI.BossSpawned && ScoreTracker.CurrentScore >= bossScoreThreshold)
+        if (!EnemyAI.BossSpawned && StageProgression.CurrentStageScore >= bossScoreThreshold)
         {
             EnemyAI.TrySpawnBoss(player.transform);
             nextSpawnCheckTime = Time.time + 0.5f;

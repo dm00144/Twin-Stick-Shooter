@@ -1,0 +1,261 @@
+using UnityEngine;
+
+[RequireComponent(typeof(Rigidbody2D))]
+[RequireComponent(typeof(Collider2D))]
+public class AllyPlane : MonoBehaviour
+{
+    [SerializeField] private float followAcceleration = 420f;
+    [SerializeField] private float maxSpeed = 360f;
+    [SerializeField] private float gravityAcceleration = 8f;
+    [SerializeField] private float fireCooldown = 0.18f;
+    [SerializeField] private float bulletLifeTime = 3.2f;
+    [SerializeField] private float fireSpreadAngle = 8f;
+    [SerializeField] private float contactInvulnerability = 1f;
+    [SerializeField] private float healthMultiplier = 3.5f;
+    [SerializeField] private float screenPadding = 6f;
+
+    private Rigidbody2D rb;
+    private PlayerMovement player;
+    private Vector3 formationOffset;
+    private float currentHealth;
+    private float nextFireTime;
+    private float lastHitTime = float.NegativeInfinity;
+    private float lastCombatActionTime = float.NegativeInfinity;
+
+    public void Initialize(PlayerMovement owner, Vector3 offset)
+    {
+        player = owner;
+        formationOffset = offset;
+        currentHealth = GetMaxHealth();
+    }
+
+    private void Awake()
+    {
+        rb = GetComponent<Rigidbody2D>();
+        rb.gravityScale = 0f;
+        rb.linearDamping = 0f;
+        rb.angularDamping = 0f;
+        rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+
+        Collider2D allyCollider = GetComponent<Collider2D>();
+        allyCollider.isTrigger = false;
+    }
+
+    private void Update()
+    {
+        if (!GameFlowManager.IsGameplayActive || player == null)
+            return;
+
+        TryFireAtNearestEnemy();
+
+        float maxHealth = GetMaxHealth();
+        if (currentHealth > maxHealth)
+            currentHealth = maxHealth;
+
+        bool canHeal = currentHealth < maxHealth && Time.time >= lastCombatActionTime + 2.5f;
+        if (canHeal)
+            currentHealth = Mathf.Min(maxHealth, currentHealth + Time.deltaTime);
+    }
+
+    private void FixedUpdate()
+    {
+        if (!GameFlowManager.IsGameplayActive || player == null)
+        {
+            rb.linearVelocity *= 0.98f;
+            rb.angularVelocity *= 0.98f;
+            return;
+        }
+
+        Vector3 targetPosition = ClampToCameraView(player.transform.TransformPoint(formationOffset));
+        targetPosition = ClampToWorldBounds(targetPosition);
+        Vector2 toTarget = targetPosition - transform.position;
+        rb.linearVelocity += toTarget.normalized * (followAcceleration * Time.fixedDeltaTime);
+        rb.linearVelocity += Vector2.down * gravityAcceleration * Time.fixedDeltaTime;
+
+        if (rb.linearVelocity.magnitude > maxSpeed)
+            rb.linearVelocity = rb.linearVelocity.normalized * maxSpeed;
+
+        EnemyAI target = FindNearestEnemy();
+        Vector2 aimDirection = target != null
+            ? ((Vector2)target.transform.position - rb.position).normalized
+            : (Vector2)player.transform.up;
+
+        float targetAngle = Mathf.Atan2(aimDirection.y, aimDirection.x) * Mathf.Rad2Deg - 90f;
+        rb.MoveRotation(Mathf.MoveTowardsAngle(rb.rotation, targetAngle, 540f * Time.fixedDeltaTime));
+    }
+
+    public void TakeHit(int damage = 1)
+    {
+        if (Time.time < lastHitTime + contactInvulnerability)
+            return;
+
+        lastHitTime = Time.time;
+        lastCombatActionTime = Time.time;
+        currentHealth = Mathf.Max(0f, currentHealth - damage);
+
+        if (currentHealth <= 0f)
+            Destroy(gameObject);
+    }
+
+    private void TryFireAtNearestEnemy()
+    {
+        if (Time.time < nextFireTime)
+            return;
+
+        EnemyAI target = FindNearestEnemy();
+        if (target == null)
+            return;
+
+        Vector2 fireDirection = ((Vector2)target.transform.position - (Vector2)transform.position).normalized;
+        fireDirection = Quaternion.Euler(0f, 0f, Random.Range(-fireSpreadAngle, fireSpreadAngle)) * fireDirection;
+
+        BulletPewPew bullet = CreateBullet();
+        bullet.transform.position = transform.position + transform.up * 1.5f;
+        bullet.transform.rotation = Quaternion.FromToRotation(Vector3.up, fireDirection);
+        bullet.SetLifeTime(bulletLifeTime);
+        bullet.ConfigureDamage(player.EffectiveBulletDamage);
+        bullet.ConfigureHoming(player.EffectiveBulletHomingStrength, true);
+        bullet.Initialize(fireDirection, Vector2.zero, gameObject, player.EffectiveBulletSpeed);
+
+        nextFireTime = Time.time + (player.UsesMissiles ? 1.1f : fireCooldown);
+        lastCombatActionTime = Time.time;
+    }
+
+    private BulletPewPew CreateBullet()
+    {
+        if (player != null && player.UsesMissiles)
+        {
+            return BulletPewPew.CreateRuntimeBullet(
+                "AllyMissile",
+                new Color(1f, 0.5f, 0.2f, 1f),
+                new Vector3(1.7f, 3.4f, 1f));
+        }
+
+        return BulletPewPew.CreateRuntimeBullet(
+            "AllyBullet",
+            new Color(0.55f, 0.9f, 1f, 1f),
+            new Vector3(1f, 1.8f, 1f));
+    }
+
+    private EnemyAI FindNearestEnemy()
+    {
+        EnemyAI[] enemies = FindObjectsByType<EnemyAI>(FindObjectsSortMode.None);
+        EnemyAI bestEnemy = null;
+        float bestDistanceSqr = float.PositiveInfinity;
+
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            if (enemies[i] == null)
+                continue;
+
+            float distanceSqr = ((Vector2)enemies[i].transform.position - rb.position).sqrMagnitude;
+            if (distanceSqr >= bestDistanceSqr)
+                continue;
+
+            bestDistanceSqr = distanceSqr;
+            bestEnemy = enemies[i];
+        }
+
+        return bestEnemy;
+    }
+
+    private float GetMaxHealth()
+    {
+        return (player != null ? player.MaxHealth : 3f) * healthMultiplier;
+    }
+
+    private Vector3 ClampToCameraView(Vector3 targetPosition)
+    {
+        Camera camera = Camera.main;
+        if (camera == null || !camera.orthographic)
+            return targetPosition;
+
+        float halfHeight = camera.orthographicSize;
+        float halfWidth = halfHeight * camera.aspect;
+        Vector3 cameraPosition = camera.transform.position;
+
+        targetPosition.x = Mathf.Clamp(
+            targetPosition.x,
+            cameraPosition.x - halfWidth + screenPadding,
+            cameraPosition.x + halfWidth - screenPadding);
+        targetPosition.y = Mathf.Clamp(
+            targetPosition.y,
+            cameraPosition.y - halfHeight + screenPadding,
+            cameraPosition.y + halfHeight - screenPadding);
+
+        return targetPosition;
+    }
+
+    private Vector3 ClampToWorldBounds(Vector3 targetPosition)
+    {
+        BoxCollider2D boundsCollider = ResolveBoundsCollider();
+        if (boundsCollider == null)
+            return targetPosition;
+
+        Bounds bounds = boundsCollider.bounds;
+        targetPosition.x = Mathf.Clamp(targetPosition.x, bounds.min.x + screenPadding, bounds.max.x - screenPadding);
+        targetPosition.y = Mathf.Clamp(targetPosition.y, bounds.min.y + screenPadding, bounds.max.y - screenPadding);
+        return targetPosition;
+    }
+
+    private static BoxCollider2D ResolveBoundsCollider()
+    {
+        CameraTracker tracker = FindFirstObjectByType<CameraTracker>();
+        if (tracker != null && tracker.BoundsCollider != null)
+            return tracker.BoundsCollider;
+
+        GameObject boundsObject = GameObject.Find("Camera Bounds");
+        return boundsObject != null ? boundsObject.GetComponent<BoxCollider2D>() : null;
+    }
+}
+
+public static class SquadronManager
+{
+    public static void RefreshSquadron()
+    {
+        DestroySquadron();
+
+        if (!UpgradeSystem.HasUpgrade(PlayerUpgrade.Squadron))
+            return;
+
+        PlayerMovement player = Object.FindFirstObjectByType<PlayerMovement>();
+        if (player == null)
+            return;
+
+        CreateAlly(player, new Vector3(-7f, -8f, 0f), 1);
+        CreateAlly(player, new Vector3(7f, -8f, 0f), 2);
+    }
+
+    public static void DestroySquadron()
+    {
+        AllyPlane[] allies = Object.FindObjectsByType<AllyPlane>(FindObjectsSortMode.None);
+        for (int i = 0; i < allies.Length; i++)
+        {
+            if (allies[i] != null)
+                Object.Destroy(allies[i].gameObject);
+        }
+    }
+
+    private static void CreateAlly(PlayerMovement player, Vector3 offset, int index)
+    {
+        GameObject allyObject = new GameObject($"SquadronAlly_{index}");
+        allyObject.transform.position = player.transform.TransformPoint(offset);
+        allyObject.transform.rotation = player.transform.rotation;
+        allyObject.transform.localScale = new Vector3(3f, 3f, 1f);
+
+        SpriteRenderer renderer = allyObject.AddComponent<SpriteRenderer>();
+        SpriteRenderer playerRenderer = player.GetComponent<SpriteRenderer>();
+        renderer.sprite = playerRenderer != null ? playerRenderer.sprite : null;
+        renderer.color = new Color(0.45f, 0.85f, 1f, 1f);
+        renderer.sortingOrder = 8;
+
+        Rigidbody2D body = allyObject.AddComponent<Rigidbody2D>();
+        body.gravityScale = 0f;
+
+        CircleCollider2D collider = allyObject.AddComponent<CircleCollider2D>();
+        collider.radius = 0.45f;
+
+        AllyPlane ally = allyObject.AddComponent<AllyPlane>();
+        ally.Initialize(player, offset);
+    }
+}

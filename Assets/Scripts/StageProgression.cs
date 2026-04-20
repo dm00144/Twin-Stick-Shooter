@@ -1,0 +1,143 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+public static class StageProgression
+{
+    public const int MaxStage = 4;
+    public const int StartingLives = 3;
+
+    private static readonly List<string> chosenUpgrades = new List<string>();
+
+    public static int CurrentStage { get; private set; } = 1;
+    public static int LivesRemaining { get; private set; } = StartingLives;
+    public static int StageStartScore { get; private set; }
+    public static int CurrentStageScore => Mathf.Max(0, ScoreTracker.CurrentScore - StageStartScore);
+    public static IReadOnlyList<string> ChosenUpgrades => chosenUpgrades;
+
+    public static event System.Action ChoicesChanged;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        StartNewRun();
+    }
+
+    public static void StartNewRun()
+    {
+        CurrentStage = 1;
+        LivesRemaining = StartingLives;
+        StageStartScore = ScoreTracker.CurrentScore;
+        chosenUpgrades.Clear();
+        UpgradeSystem.StartNewRun();
+        ChoicesChanged?.Invoke();
+    }
+
+    public static void HandleBossDestroyed()
+    {
+        if (!GameFlowManager.IsGameplayActive)
+            return;
+
+        if (CurrentStage >= MaxStage)
+        {
+            GameFlowManager.TriggerVictory();
+            return;
+        }
+
+        PrepareUpgradeChoices();
+        GameFlowManager.TriggerUpgradeChoice();
+    }
+
+    public static void SelectUpgrade(int choiceIndex)
+    {
+        if (!GameFlowManager.IsUpgradeChoiceActive)
+            return;
+
+        if (choiceIndex < 0 || choiceIndex >= UpgradeSystem.CurrentChoices.Count)
+            return;
+
+        PlayerUpgrade upgrade = UpgradeSystem.CurrentChoices[choiceIndex];
+        if (!UpgradeSystem.SelectCurrentChoice(choiceIndex))
+            return;
+
+        chosenUpgrades.Add(UpgradeSystem.GetDisplayName(upgrade));
+        CurrentStage = Mathf.Min(MaxStage, CurrentStage + 1);
+        StageStartScore = ScoreTracker.CurrentScore;
+        StageSoftReset.ResetForNextStage();
+        GameFlowManager.ResumeGameplayAfterUpgrade();
+        ChoicesChanged?.Invoke();
+    }
+
+    public static bool TrySpendLife()
+    {
+        if (LivesRemaining <= 1)
+        {
+            LivesRemaining = 0;
+            ChoicesChanged?.Invoke();
+            return false;
+        }
+
+        LivesRemaining--;
+        StageStartScore = ScoreTracker.CurrentScore;
+        StageSoftReset.ResetForNextStage();
+        ChoicesChanged?.Invoke();
+        return true;
+    }
+
+    public static int GetCurrentStageGoal()
+    {
+        return MaxStage;
+    }
+
+    private static void PrepareUpgradeChoices()
+    {
+        UpgradeSystem.PrepareChoices();
+        ChoicesChanged?.Invoke();
+    }
+}
+
+public static class StageSoftReset
+{
+    public static void ResetForNextStage()
+    {
+        EnemyAI.DestroyAllActiveEnemies();
+        BulletPewPew.DestroyAllActiveBullets();
+
+        PlayerMovement player = Object.FindFirstObjectByType<PlayerMovement>();
+        if (player != null)
+            player.ResetForStageStart();
+
+        SquadronManager.RefreshSquadron();
+    }
+}
+
+public class StageProgressionDirector : MonoBehaviour
+{
+    private static StageProgressionDirector instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void Bootstrap()
+    {
+        if (instance != null)
+            return;
+
+        GameObject directorObject = new GameObject("StageProgressionDirector");
+        instance = directorObject.AddComponent<StageProgressionDirector>();
+        Object.DontDestroyOnLoad(directorObject);
+    }
+
+    private void Awake()
+    {
+        if (instance != null && instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        instance = this;
+        DontDestroyOnLoad(gameObject);
+    }
+
+    private void Update()
+    {
+    }
+}

@@ -22,6 +22,7 @@ public static class GameFlowManager
     public static bool IsGameplayActive { get; private set; }
     public static bool IsGameOver { get; private set; }
     public static bool IsVictory { get; private set; }
+    public static bool IsUpgradeChoiceActive { get; private set; }
 
     public static event System.Action StateChanged;
 
@@ -30,15 +31,19 @@ public static class GameFlowManager
         IsGameplayActive = false;
         IsGameOver = false;
         IsVictory = false;
+        IsUpgradeChoiceActive = false;
         StateChanged?.Invoke();
     }
 
     public static void StartGameplay()
     {
         ScoreTracker.Reset();
+        StageProgression.StartNewRun();
         IsGameplayActive = true;
         IsGameOver = false;
         IsVictory = false;
+        IsUpgradeChoiceActive = false;
+        StageSoftReset.ResetForNextStage();
         StateChanged?.Invoke();
     }
 
@@ -50,7 +55,23 @@ public static class GameFlowManager
         IsGameplayActive = false;
         IsGameOver = true;
         IsVictory = false;
+        IsUpgradeChoiceActive = false;
         StateChanged?.Invoke();
+    }
+
+    public static void TriggerPlayerDeath()
+    {
+        if (StageProgression.TrySpendLife())
+        {
+            IsGameplayActive = true;
+            IsGameOver = false;
+            IsVictory = false;
+            IsUpgradeChoiceActive = false;
+            StateChanged?.Invoke();
+            return;
+        }
+
+        TriggerGameOver();
     }
 
     public static void TriggerVictory()
@@ -61,6 +82,28 @@ public static class GameFlowManager
         IsGameplayActive = false;
         IsGameOver = false;
         IsVictory = true;
+        IsUpgradeChoiceActive = false;
+        StateChanged?.Invoke();
+    }
+
+    public static void TriggerUpgradeChoice()
+    {
+        if (IsUpgradeChoiceActive)
+            return;
+
+        IsGameplayActive = false;
+        IsGameOver = false;
+        IsVictory = false;
+        IsUpgradeChoiceActive = true;
+        StateChanged?.Invoke();
+    }
+
+    public static void ResumeGameplayAfterUpgrade()
+    {
+        IsGameplayActive = true;
+        IsGameOver = false;
+        IsVictory = false;
+        IsUpgradeChoiceActive = false;
         StateChanged?.Invoke();
     }
 }
@@ -71,6 +114,8 @@ public class GameHUD : MonoBehaviour
 
     private PlayerMovement player;
     private Text scoreText;
+    private Text stageText;
+    private Text livesText;
     private Text hullText;
     private RectTransform healthFill;
     private float healthFillWidth = 300f;
@@ -110,12 +155,16 @@ public class GameHUD : MonoBehaviour
         DontDestroyOnLoad(gameObject);
         CreateCanvas();
         GameFlowManager.StateChanged += RefreshGameStateUI;
+        StageProgression.ChoicesChanged += RefreshGameStateUI;
+        UpgradeSystem.UpgradesChanged += RefreshGameStateUI;
         RefreshGameStateUI();
     }
 
     private void OnDestroy()
     {
         GameFlowManager.StateChanged -= RefreshGameStateUI;
+        StageProgression.ChoicesChanged -= RefreshGameStateUI;
+        UpgradeSystem.UpgradesChanged -= RefreshGameStateUI;
     }
 
     private void Update()
@@ -129,6 +178,10 @@ public class GameHUD : MonoBehaviour
             return;
 
         scoreText.text = $"Score: {ScoreTracker.CurrentScore}";
+        if (stageText != null)
+            stageText.text = $"Stage {StageProgression.CurrentStage}/{StageProgression.MaxStage}: Destroy Boss";
+        if (livesText != null)
+            livesText.text = $"Lives: {StageProgression.LivesRemaining}";
 
         if (player == null)
         {
@@ -157,23 +210,25 @@ public class GameHUD : MonoBehaviour
         canvasObject.AddComponent<GraphicRaycaster>();
 
         healthFillWidth = 160f;
-        GameObject panel = CreatePanel("Panel", canvasObject.transform, new Vector2(12f, -12f), new Vector2(190f, 70f), new Color(0f, 0f, 0f, 0.35f));
-        scoreText = CreateText("ScoreText", panel.transform, new Vector2(10f, -8f), new Vector2(160f, 18f), 14, TextAnchor.UpperLeft);
-        hullText = CreateText("HullText", panel.transform, new Vector2(10f, -28f), new Vector2(160f, 18f), 14, TextAnchor.UpperLeft);
+        GameObject panel = CreatePanel("Panel", canvasObject.transform, new Vector2(12f, -12f), new Vector2(215f, 100f), new Color(0f, 0f, 0f, 0.35f));
+        scoreText = CreateText("ScoreText", panel.transform, new Vector2(8f, -7f), new Vector2(190f, 18f), 13, TextAnchor.UpperLeft);
+        stageText = CreateText("StageText", panel.transform, new Vector2(8f, -26f), new Vector2(195f, 18f), 13, TextAnchor.UpperLeft);
+        livesText = CreateText("LivesText", panel.transform, new Vector2(8f, -45f), new Vector2(160f, 18f), 13, TextAnchor.UpperLeft);
+        hullText = CreateText("HullText", panel.transform, new Vector2(8f, -64f), new Vector2(160f, 18f), 13, TextAnchor.UpperLeft);
 
-        GameObject barBackground = CreatePanel("HealthBarBg", panel.transform, new Vector2(10f, -50f), new Vector2(healthFillWidth, 10f), new Color(0.18f, 0.1f, 0.1f, 0.95f));
-        GameObject fill = CreatePanel("HealthBarFill", barBackground.transform, Vector2.zero, new Vector2(healthFillWidth, 10f), new Color(0.3f, 0.95f, 0.45f, 1f));
+        GameObject barBackground = CreatePanel("HealthBarBg", panel.transform, new Vector2(10f, -86f), new Vector2(healthFillWidth, 8f), new Color(0.18f, 0.1f, 0.1f, 0.95f));
+        GameObject fill = CreatePanel("HealthBarFill", barBackground.transform, Vector2.zero, new Vector2(healthFillWidth, 8f), new Color(0.3f, 0.95f, 0.45f, 1f));
         healthFill = fill.GetComponent<RectTransform>();
         healthFill.anchorMin = new Vector2(0f, 0.5f);
         healthFill.anchorMax = new Vector2(0f, 0.5f);
         healthFill.pivot = new Vector2(0f, 0.5f);
         healthFill.anchoredPosition = Vector2.zero;
 
-        startPanel = CreateCenterPanel("StartPanel", canvasObject.transform, new Vector2(420f, 170f), new Color(0f, 0f, 0f, 0.55f));
-        centerTitleText = CreateCenteredText("StartTitle", startPanel.transform, new Vector2(30f, -26f), new Vector2(360f, 40f), 28, TextAnchor.MiddleCenter);
-        centerBodyText = CreateCenteredText("StartBody", startPanel.transform, new Vector2(30f, -78f), new Vector2(360f, 60f), 18, TextAnchor.MiddleCenter);
+        startPanel = CreateCenterPanel("StartPanel", canvasObject.transform, new Vector2(560f, 280f), new Color(0f, 0f, 0f, 0.55f));
+        centerTitleText = CreateCenteredText("StartTitle", startPanel.transform, new Vector2(30f, -26f), new Vector2(500f, 40f), 28, TextAnchor.MiddleCenter);
+        centerBodyText = CreateCenteredText("StartBody", startPanel.transform, new Vector2(30f, -78f), new Vector2(500f, 170f), 16, TextAnchor.MiddleCenter);
 
-        gameOverPanel = CreateCenterPanel("GameOverPanel", canvasObject.transform, new Vector2(420f, 170f), new Color(0f, 0f, 0f, 0.6f));
+        gameOverPanel = CreateCenterPanel("GameOverPanel", canvasObject.transform, new Vector2(560f, 280f), new Color(0f, 0f, 0f, 0.6f));
         gameOverPanel.SetActive(false);
     }
 
@@ -261,7 +316,7 @@ public class GameHUD : MonoBehaviour
     {
         if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return))
         {
-            if (!GameFlowManager.IsGameplayActive && !GameFlowManager.IsGameOver && !GameFlowManager.IsVictory)
+            if (!GameFlowManager.IsGameplayActive && !GameFlowManager.IsGameOver && !GameFlowManager.IsVictory && !GameFlowManager.IsUpgradeChoiceActive)
             {
                 GameFlowManager.StartGameplay();
                 return;
@@ -270,6 +325,16 @@ public class GameHUD : MonoBehaviour
             if (GameFlowManager.IsGameOver || GameFlowManager.IsVictory)
                 RestartScene();
         }
+
+        if (!GameFlowManager.IsUpgradeChoiceActive)
+            return;
+
+        if (Input.GetKeyDown(KeyCode.Alpha1))
+            StageProgression.SelectUpgrade(0);
+        else if (Input.GetKeyDown(KeyCode.Alpha2))
+            StageProgression.SelectUpgrade(1);
+        else if (Input.GetKeyDown(KeyCode.Alpha3))
+            StageProgression.SelectUpgrade(2);
     }
 
     private void RefreshGameStateUI()
@@ -277,13 +342,24 @@ public class GameHUD : MonoBehaviour
         if (startPanel == null || gameOverPanel == null || centerTitleText == null || centerBodyText == null)
             return;
 
-        startPanel.SetActive(!GameFlowManager.IsGameplayActive && !GameFlowManager.IsGameOver && !GameFlowManager.IsVictory);
+        startPanel.SetActive(!GameFlowManager.IsGameplayActive);
         gameOverPanel.SetActive(GameFlowManager.IsGameOver || GameFlowManager.IsVictory);
 
-        if (!GameFlowManager.IsGameplayActive && !GameFlowManager.IsGameOver && !GameFlowManager.IsVictory)
+        if (!GameFlowManager.IsGameplayActive && !GameFlowManager.IsGameOver && !GameFlowManager.IsVictory && !GameFlowManager.IsUpgradeChoiceActive)
         {
             centerTitleText.text = "Twin Stick Shooter";
             centerBodyText.text = "Press Space or Enter to start";
+        }
+
+        if (GameFlowManager.IsUpgradeChoiceActive)
+        {
+            var choices = UpgradeSystem.CurrentChoices;
+            centerTitleText.text = $"Stage {StageProgression.CurrentStage} Complete";
+            centerBodyText.text =
+                $"Choose an upgrade\n" +
+                $"1. {UpgradeSystem.GetDisplayName(choices[0])}: {UpgradeSystem.GetDescription(choices[0])}\n" +
+                $"2. {UpgradeSystem.GetDisplayName(choices[1])}: {UpgradeSystem.GetDescription(choices[1])}\n" +
+                $"3. {UpgradeSystem.GetDisplayName(choices[2])}: {UpgradeSystem.GetDescription(choices[2])}";
         }
 
         if (GameFlowManager.IsGameOver)

@@ -7,11 +7,14 @@ public class BulletPewPew : MonoBehaviour
     [SerializeField] private float speed = 20f;
     [SerializeField] private float lifeTime = 3f;
     [SerializeField] private int damage = 1;
+    [SerializeField] private float homingStrength;
+    [SerializeField] private bool targetsEnemies;
 
     private static Sprite fallbackBulletSprite;
     private Rigidbody2D rb;
     private GameObject owner;
     private bool firedByPlayer;
+    private Transform homingTarget;
 
     private void Awake()
     {
@@ -32,7 +35,7 @@ public class BulletPewPew : MonoBehaviour
     public void Initialize(Vector2 direction, Vector2 inheritedVelocity, GameObject bulletOwner, float overrideSpeed = -1f)
     {
         owner = bulletOwner;
-        firedByPlayer = bulletOwner != null && bulletOwner.GetComponent<PlayerMovement>() != null;
+        firedByPlayer = bulletOwner != null && (bulletOwner.GetComponent<PlayerMovement>() != null || bulletOwner.GetComponent<AllyPlane>() != null);
 
         if (overrideSpeed > 0f)
             speed = overrideSpeed;
@@ -46,9 +49,50 @@ public class BulletPewPew : MonoBehaviour
             lifeTime = overrideLifeTime;
     }
 
+    public void ConfigureDamage(int newDamage)
+    {
+        damage = Mathf.Max(1, newDamage);
+    }
+
+    public void ConfigureHoming(float strength, bool seekEnemies)
+    {
+        homingStrength = Mathf.Max(0f, strength);
+        targetsEnemies = seekEnemies;
+    }
+
     public void Fire(Vector2 direction)
     {
         Initialize(direction, Vector2.zero, null);
+    }
+
+    private void FixedUpdate()
+    {
+        if (homingStrength <= 0f)
+            return;
+
+        if (homingTarget == null)
+            homingTarget = FindHomingTarget();
+
+        if (homingTarget == null)
+            return;
+
+        Vector2 desiredDirection = ((Vector2)homingTarget.position - rb.position).normalized;
+        Vector2 currentDirection = rb.linearVelocity.sqrMagnitude > 0.01f
+            ? rb.linearVelocity.normalized
+            : (Vector2)transform.up;
+        Vector2 steeredDirection = Vector2.Lerp(currentDirection, desiredDirection, homingStrength * Time.fixedDeltaTime).normalized;
+        rb.linearVelocity = steeredDirection * speed;
+        transform.rotation = Quaternion.FromToRotation(Vector3.up, steeredDirection);
+    }
+
+    public static void DestroyAllActiveBullets()
+    {
+        BulletPewPew[] bullets = FindObjectsByType<BulletPewPew>(FindObjectsSortMode.None);
+        for (int i = 0; i < bullets.Length; i++)
+        {
+            if (bullets[i] != null)
+                Destroy(bullets[i].gameObject);
+        }
     }
 
     private void OnTriggerEnter2D(Collider2D other)
@@ -60,6 +104,14 @@ public class BulletPewPew : MonoBehaviour
         if (player != null && !firedByPlayer)
         {
             player.TakeHit();
+            Destroy(gameObject);
+            return;
+        }
+
+        AllyPlane ally = other.GetComponent<AllyPlane>();
+        if (ally != null && !firedByPlayer)
+        {
+            ally.TakeHit();
             Destroy(gameObject);
             return;
         }
@@ -95,6 +147,31 @@ public class BulletPewPew : MonoBehaviour
         bulletCollider.radius = 0.5f;
 
         return bulletObject.AddComponent<BulletPewPew>();
+    }
+
+    private Transform FindHomingTarget()
+    {
+        if (!targetsEnemies)
+            return null;
+
+        EnemyAI[] enemies = FindObjectsByType<EnemyAI>(FindObjectsSortMode.None);
+        EnemyAI bestEnemy = null;
+        float bestDistanceSqr = float.PositiveInfinity;
+
+        for (int i = 0; i < enemies.Length; i++)
+        {
+            if (enemies[i] == null)
+                continue;
+
+            float distanceSqr = ((Vector2)enemies[i].transform.position - rb.position).sqrMagnitude;
+            if (distanceSqr >= bestDistanceSqr)
+                continue;
+
+            bestDistanceSqr = distanceSqr;
+            bestEnemy = enemies[i];
+        }
+
+        return bestEnemy != null ? bestEnemy.transform : null;
     }
 
     private static Sprite GetFallbackBulletSprite()
