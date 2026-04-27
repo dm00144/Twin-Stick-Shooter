@@ -6,7 +6,7 @@ using UnityEngine.SceneManagement;
 public class CloudHazard : MonoBehaviour
 {
     private static Sprite generatedCloudSprite;
-    private const float VisualScaleMultiplier = 4f;
+    private const float VisualScaleMultiplier = 3f;
 
     [SerializeField] private float slowMultiplier = 0.4f;
     [SerializeField] private float triggerRadius = 20f;
@@ -106,6 +106,10 @@ public class CloudHazard : MonoBehaviour
 
     private static Sprite GetOrCreateCloudSprite()
     {
+        Sprite projectCloudSprite = GameSpriteLibrary.GetCloudSprite();
+        if (projectCloudSprite != null)
+            return projectCloudSprite;
+
         if (generatedCloudSprite != null)
             return generatedCloudSprite;
 

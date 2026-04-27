@@ -83,6 +83,8 @@ public class EnemyAI : MonoBehaviour
         spriteRenderer = GetComponent<SpriteRenderer>();
         rb.gravityScale = 0f;
 
+        ApplyVariantSprite();
+
         // Presets for enemy clases
         ApplyVariantPreset();
         ConfigureStrafeMovement();
@@ -408,7 +410,8 @@ public class EnemyAI : MonoBehaviour
                 bulletsPerShot = 3;
                 multiShotSpacing = 12f;
                 scoreValue = 200;
-                TintSprite(new Color(0.35f, 0.95f, 0.45f, 1f));
+                transform.localScale = new Vector3(4.8f, 4.8f, 1f);
+                TintSprite(Color.white);
                 break;
 
             case EnemyVariant.Ace:
@@ -431,7 +434,8 @@ public class EnemyAI : MonoBehaviour
                 bulletsPerShot = 1;
                 multiShotSpacing = 0f;
                 scoreValue = 350;
-                TintSprite(new Color(1f, 0.55f, 0.15f, 1f));
+                transform.localScale = new Vector3(4.25f, 4.25f, 1f);
+                TintSprite(Color.white);
                 break;
 
             case EnemyVariant.Boss:
@@ -455,7 +459,7 @@ public class EnemyAI : MonoBehaviour
                 multiShotSpacing = 2f;
                 scoreValue = 2000;
                 transform.localScale = new Vector3(15f, 24f, 1f);
-                TintSprite(new Color(0.95f, 0.35f, 0.2f, 1f));
+                TintSprite(Color.white);
                 break;
 
             default:
@@ -536,6 +540,58 @@ public class EnemyAI : MonoBehaviour
     {
         if (spriteRenderer != null)
             spriteRenderer.color = color;
+    }
+
+    private void ApplyVariantSprite()
+    {
+        if (spriteRenderer == null)
+            return;
+
+        Sprite variantSprite = variant switch
+        {
+            EnemyVariant.SpreadShooter => GameSpriteLibrary.GetEnemySpreadShooterSprite(),
+            EnemyVariant.Ace => GameSpriteLibrary.GetEnemyAceSprite(),
+            EnemyVariant.Boss => GameSpriteLibrary.GetEnemyBossSprite(),
+            _ => GameSpriteLibrary.GetEnemyFighterSprite()
+        };
+
+        if (variantSprite == null)
+            return;
+
+        spriteRenderer.sprite = variantSprite;
+        spriteRenderer.color = Color.white;
+        AlignColliderToSprite(variantSprite);
+    }
+
+    private void AlignColliderToSprite(Sprite sprite)
+    {
+        if (sprite == null)
+            return;
+
+        CircleCollider2D circleCollider = GetComponent<CircleCollider2D>();
+        if (circleCollider != null)
+        {
+            float baseSize = Mathf.Min(sprite.bounds.size.x, sprite.bounds.size.y);
+            circleCollider.radius = baseSize * 0.28f;
+            circleCollider.offset = Vector2.zero;
+            return;
+        }
+
+        BoxCollider2D boxCollider = GetComponent<BoxCollider2D>();
+        if (boxCollider == null)
+            return;
+
+        Vector2 spriteSize = sprite.bounds.size;
+        if (variant == EnemyVariant.Boss)
+        {
+            boxCollider.size = new Vector2(spriteSize.x * 0.62f, spriteSize.y * 0.82f);
+            boxCollider.offset = new Vector2(0f, spriteSize.y * 0.03f);
+        }
+        else
+        {
+            boxCollider.size = new Vector2(spriteSize.x * 0.62f, spriteSize.y * 0.62f);
+            boxCollider.offset = Vector2.zero;
+        }
     }
 
     private static EnemyVariant ChooseVariant()

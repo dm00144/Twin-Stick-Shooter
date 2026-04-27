@@ -155,7 +155,14 @@ MonoBehaviour:
   moveSpeed: 20
   turnSpeed: 120
   preferredDistance: 80
+  lateralSpeed: 5
+  radialCorrectionStrength: 0.35
+  strafeDirectionChangeInterval: 3.5
+  lateralWobbleStrength: 1.5
+  lateralWobbleFrequency: 1.3
   gravityAcceleration: 100
+  separationRadius: 12
+  separationStrength: 10
   hitPoints: 1
   bulletPrefab: {fileID: 0}
   bulletSpeed: 28
@@ -775,7 +782,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 180, z: 0}
-  m_LocalScale: {x: 3, y: 8, z: 1}
+  m_LocalScale: {x: 5, y: 8, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 1837191199}
@@ -974,10 +981,14 @@ MonoBehaviour:
   fireCooldown: 0.06
   bulletSpreadAngle: 7.5
   recoilForce: 2.5
+  gatlingSpinUpTime: 0.4
+  tailGunnerCooldown: 0.117
+  tailGunnerSpreadAngle: 6
   maxHealth: 3
   regenDelay: 2.5
   regenRate: 1
   contactInvulnerability: 1
+  shieldRechargeTime: 5
 --- !u!1 &861906292
 GameObject:
   m_ObjectHideFlags: 0

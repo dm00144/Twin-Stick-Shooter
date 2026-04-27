@@ -60,6 +60,7 @@ public class PlayerMovement : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
+        ApplyPlayerSprite();
         currentHealth = maxHealth;
 
         rb.bodyType = RigidbodyType2D.Dynamic;
@@ -70,6 +71,35 @@ public class PlayerMovement : MonoBehaviour
         rb.interpolation = RigidbodyInterpolation2D.Interpolate;
         stageStartPosition = transform.position;
         stageStartRotation = transform.rotation;
+    }
+
+    private void ApplyPlayerSprite()
+    {
+        SpriteRenderer spriteRenderer = GetComponent<SpriteRenderer>();
+        if (spriteRenderer == null)
+            return;
+
+        Sprite playerSprite = GameSpriteLibrary.GetPlayerShipSprite();
+        if (playerSprite == null)
+            return;
+
+        spriteRenderer.sprite = playerSprite;
+        spriteRenderer.color = Color.white;
+        AlignColliderToSprite(playerSprite);
+    }
+
+    private void AlignColliderToSprite(Sprite sprite)
+    {
+        if (sprite == null)
+            return;
+
+        BoxCollider2D collider = GetComponent<BoxCollider2D>();
+        if (collider == null)
+            return;
+
+        Vector2 spriteSize = sprite.bounds.size;
+        collider.size = new Vector2(spriteSize.x * 0.55f, spriteSize.y * 0.72f);
+        collider.offset = new Vector2(0f, spriteSize.y * 0.02f);
     }
 
     private void Update()
@@ -204,9 +234,7 @@ public class PlayerMovement : MonoBehaviour
 
         float spreadOffset = Random.Range(-bulletSpreadAngle, bulletSpreadAngle);
         Vector2 fireDirection = Quaternion.Euler(0f, 0f, spreadOffset) * transform.up;
-        Vector3 spawnPoint = firePoint != null
-            ? firePoint.position
-            : transform.position + transform.up * muzzleDistance;
+        Vector3 spawnPoint = GetMuzzlePosition(true);
 
         bullet.transform.position = spawnPoint;
         bullet.transform.rotation = transform.rotation;
@@ -254,7 +282,7 @@ public class PlayerMovement : MonoBehaviour
         Vector2 targetDirection = ((Vector2)target.transform.position - (Vector2)transform.position).normalized;
         float spreadOffset = Random.Range(-tailGunnerSpreadAngle, tailGunnerSpreadAngle);
         Vector2 fireDirection = Quaternion.Euler(0f, 0f, spreadOffset) * Vector2.Lerp(rearDirection, targetDirection, 0.85f).normalized;
-        Vector3 spawnPoint = transform.position - transform.up * muzzleDistance;
+        Vector3 spawnPoint = GetMuzzlePosition(false);
 
         bullet.transform.position = spawnPoint;
         bullet.transform.rotation = Quaternion.FromToRotation(Vector3.up, fireDirection);
@@ -357,6 +385,22 @@ public class PlayerMovement : MonoBehaviour
             effectiveRecoil *= 0.55f;
 
         return effectiveRecoil;
+    }
+
+    private Vector3 GetMuzzlePosition(bool forward)
+    {
+        SpriteRenderer spriteRenderer = GetComponent<SpriteRenderer>();
+        if (spriteRenderer != null && spriteRenderer.sprite != null)
+        {
+            float spriteHalfHeight = spriteRenderer.sprite.bounds.extents.y * transform.lossyScale.y;
+            float direction = forward ? 1f : -1f;
+            return transform.position + transform.up * spriteHalfHeight * 0.92f * direction;
+        }
+
+        if (firePoint != null && forward)
+            return firePoint.position;
+
+        return transform.position + transform.up * muzzleDistance * (forward ? 1f : -1f);
     }
 
     private BulletPewPew CreateBulletInstance()

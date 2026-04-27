@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public static class StageProgression
 {
@@ -135,9 +136,36 @@ public class StageProgressionDirector : MonoBehaviour
 
         instance = this;
         DontDestroyOnLoad(gameObject);
+        StageProgression.ChoicesChanged += ApplyStageVisuals;
+        SceneManager.sceneLoaded += HandleSceneLoaded;
+    }
+
+    private void OnDestroy()
+    {
+        StageProgression.ChoicesChanged -= ApplyStageVisuals;
+        SceneManager.sceneLoaded -= HandleSceneLoaded;
     }
 
     private void Update()
     {
+    }
+
+    private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        ApplyStageVisuals();
+    }
+
+    private void ApplyStageVisuals()
+    {
+        SpriteRenderer[] renderers = FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None);
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            SpriteRenderer renderer = renderers[i];
+            if (renderer == null || renderer.sortingOrder != -1)
+                continue;
+
+            renderer.sprite = GameSpriteLibrary.GetStageBackgroundSprite(StageProgression.CurrentStage);
+            renderer.color = Color.white;
+        }
     }
 }

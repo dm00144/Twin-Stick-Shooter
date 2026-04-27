@@ -21,6 +21,7 @@ public class AllyPlane : MonoBehaviour
     private float nextFireTime;
     private float lastHitTime = float.NegativeInfinity;
     private float lastCombatActionTime = float.NegativeInfinity;
+    private SpriteRenderer spriteRenderer;
 
     public void Initialize(PlayerMovement owner, Vector3 offset)
     {
@@ -32,6 +33,7 @@ public class AllyPlane : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
+        spriteRenderer = GetComponent<SpriteRenderer>();
         rb.gravityScale = 0f;
         rb.linearDamping = 0f;
         rb.angularDamping = 0f;
@@ -110,7 +112,7 @@ public class AllyPlane : MonoBehaviour
         fireDirection = Quaternion.Euler(0f, 0f, Random.Range(-fireSpreadAngle, fireSpreadAngle)) * fireDirection;
 
         BulletPewPew bullet = CreateBullet();
-        bullet.transform.position = transform.position + transform.up * 1.5f;
+        bullet.transform.position = GetMuzzlePosition();
         bullet.transform.rotation = Quaternion.FromToRotation(Vector3.up, fireDirection);
         bullet.SetLifeTime(bulletLifeTime);
         bullet.ConfigureDamage(player.EffectiveBulletDamage);
@@ -135,6 +137,17 @@ public class AllyPlane : MonoBehaviour
             "AllyBullet",
             new Color(0.55f, 0.9f, 1f, 1f),
             new Vector3(1f, 1.8f, 1f));
+    }
+
+    private Vector3 GetMuzzlePosition()
+    {
+        if (spriteRenderer != null && spriteRenderer.sprite != null)
+        {
+            float spriteHalfHeight = spriteRenderer.sprite.bounds.extents.y * transform.lossyScale.y;
+            return transform.position + transform.up * spriteHalfHeight * 0.92f;
+        }
+
+        return transform.position + transform.up * 1.5f;
     }
 
     private EnemyAI FindNearestEnemy()
@@ -244,16 +257,18 @@ public static class SquadronManager
         allyObject.transform.localScale = new Vector3(3f, 3f, 1f);
 
         SpriteRenderer renderer = allyObject.AddComponent<SpriteRenderer>();
-        SpriteRenderer playerRenderer = player.GetComponent<SpriteRenderer>();
-        renderer.sprite = playerRenderer != null ? playerRenderer.sprite : null;
-        renderer.color = new Color(0.45f, 0.85f, 1f, 1f);
+        renderer.sprite = GameSpriteLibrary.GetSquadronShipSprite();
+        renderer.color = Color.white;
         renderer.sortingOrder = 8;
 
         Rigidbody2D body = allyObject.AddComponent<Rigidbody2D>();
         body.gravityScale = 0f;
 
         CircleCollider2D collider = allyObject.AddComponent<CircleCollider2D>();
-        collider.radius = 0.45f;
+        if (renderer.sprite != null)
+            collider.radius = Mathf.Min(renderer.sprite.bounds.size.x, renderer.sprite.bounds.size.y) * allyObject.transform.localScale.x * 0.18f;
+        else
+            collider.radius = 0.45f;
 
         AllyPlane ally = allyObject.AddComponent<AllyPlane>();
         ally.Initialize(player, offset);
