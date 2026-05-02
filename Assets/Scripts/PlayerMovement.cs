@@ -63,6 +63,7 @@ public class PlayerMovement : MonoBehaviour
         ApplyPlayerSprite();
         currentHealth = maxHealth;
 
+        // We drive the plane manually, so Unity gravity gets politely shown the door.
         rb.bodyType = RigidbodyType2D.Dynamic;
         rb.simulated = true;
         rb.gravityScale = 0f;
@@ -107,6 +108,7 @@ public class PlayerMovement : MonoBehaviour
         if (!GameFlowManager.IsGameplayActive)
             return;
 
+        // Read input in Update, then let FixedUpdate do the actual shoving around.
         turnInput = 0f;
         thrustInput = 0f;
 
@@ -133,7 +135,7 @@ public class PlayerMovement : MonoBehaviour
         if (UpgradeSystem.HasUpgrade(PlayerUpgrade.TailGunner))
             TryTailGunner();
 
-        // Makes sure that shooting anbd damage interupts health regen
+        // Shooting and taking hits interrupt regen, because duct tape needs a quiet moment.
         float effectiveMaxHealth = EffectiveMaxHealth;
         if (currentHealth > effectiveMaxHealth)
             currentHealth = effectiveMaxHealth;
@@ -150,7 +152,7 @@ public class PlayerMovement : MonoBehaviour
     {
         if (!GameFlowManager.IsGameplayActive)
         {
-            // Let the ship coast down 
+            // Let the ship coast down when menus/story cards pause the dogfight.
             rb.linearVelocity *= 0.98f;
             rb.angularVelocity *= 0.98f;
             return;
@@ -167,7 +169,7 @@ public class PlayerMovement : MonoBehaviour
         else
             rb.linearVelocity *= idleDamping;
 
-        // Clouds now input drag on player with regular fall speed
+        // The whole battle drifts downward, so the player is always fighting the sky a little.
         rb.linearVelocity += Vector2.down * gravityAcceleration * slow * Time.fixedDeltaTime;
 
         var speedCap = maxSpeed * movementSpeedMultiplier * slow;
@@ -181,6 +183,7 @@ public class PlayerMovement : MonoBehaviour
         if (UpgradeSystem.HasUpgrade(PlayerUpgrade.SpecializedTraining))
             return;
 
+        // Multiple clouds can slow us at once; keep each source separate so it can clean itself up.
         movementModifiers[sourceId] = Mathf.Clamp(multiplier, 0.1f, 1f);
     }
 
@@ -196,6 +199,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (TryBlockWithShield())
         {
+            // Shield upgrade eats the hit, then goes off to recharge and think about what it did.
             lastHitTime = Time.time;
             return;
         }
@@ -210,6 +214,7 @@ public class PlayerMovement : MonoBehaviour
 
     public void ResetForStageStart()
     {
+        // Stage reset is a soft reset: keep upgrades, restore the aircraft, clear the chaos.
         transform.SetPositionAndRotation(stageStartPosition, stageStartRotation);
         rb.linearVelocity = Vector2.zero;
         rb.angularVelocity = 0f;
@@ -222,6 +227,7 @@ public class PlayerMovement : MonoBehaviour
     {
         shootHeldTime += Time.deltaTime;
 
+        // Gatling mode needs a tiny wind-up before it becomes deeply unreasonable.
         if (UpgradeSystem.HasUpgrade(PlayerUpgrade.GatlingMode) && shootHeldTime < gatlingSpinUpTime)
             return;
 
@@ -243,8 +249,9 @@ public class PlayerMovement : MonoBehaviour
         bullet.ConfigureHoming(GetEffectiveBulletHomingStrength(), true);
         bullet.Initialize(fireDirection, Vector2.zero, gameObject, GetEffectiveBulletSpeed());
 
-        // Recoil inspired from Luftrausers to get a similar feel
+        // Recoil inspired by Luftrausers: shooting is also a tiny movement choice.
         rb.AddForce(-fireDirection * GetEffectiveRecoilForce(), ForceMode2D.Impulse);
+        GameAudio.PlayPlayerGun();
         nextFireTime = Time.time + GetEffectiveFireCooldown();
         lastCombatActionTime = Time.time;
     }
@@ -270,6 +277,7 @@ public class PlayerMovement : MonoBehaviour
         if (Time.time < nextTailGunnerFireTime)
             return;
 
+        // Tail gunner only cares about enemies behind us. Very loyal, very literal.
         EnemyAI target = FindTailGunnerTarget();
         if (target == null)
             return;
@@ -291,6 +299,7 @@ public class PlayerMovement : MonoBehaviour
         bullet.ConfigureHoming(GetEffectiveBulletHomingStrength() * 0.5f, true);
         bullet.Initialize(fireDirection, Vector2.zero, gameObject, GetEffectiveBulletSpeed() * 0.85f);
 
+        GameAudio.PlaySquadronGun();
         nextTailGunnerFireTime = Time.time + tailGunnerCooldown;
     }
 
@@ -337,6 +346,7 @@ public class PlayerMovement : MonoBehaviour
 
     private float GetEffectiveFireCooldown()
     {
+        // Upgrade math lives here so the firing code can stay readable.
         if (UpgradeSystem.HasUpgrade(PlayerUpgrade.MissileMode))
             return 0.85f;
 
@@ -405,6 +415,7 @@ public class PlayerMovement : MonoBehaviour
 
     private BulletPewPew CreateBulletInstance()
     {
+        // Prefer scene/prefab bullets if they exist, otherwise build a simple runtime bullet.
         if (bulletPrefab != null)
         {
             var bullet = Instantiate(bulletPrefab);

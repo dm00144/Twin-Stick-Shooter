@@ -25,6 +25,7 @@ public static class StageProgression
 
     public static void StartNewRun()
     {
+        // New run, clean slate. The prototype gets one more shot at being a good idea.
         CurrentStage = 1;
         LivesRemaining = StartingLives;
         StageStartScore = ScoreTracker.CurrentScore;
@@ -38,9 +39,10 @@ public static class StageProgression
         if (!GameFlowManager.IsGameplayActive)
             return;
 
+        // The last boss defeat gets a story beat before the regular victory screen kicks in.
         if (CurrentStage >= MaxStage)
         {
-            GameFlowManager.TriggerVictory();
+            GameFlowManager.TriggerFinalStoryBlurb();
             return;
         }
 
@@ -63,8 +65,9 @@ public static class StageProgression
         chosenUpgrades.Add(UpgradeSystem.GetDisplayName(upgrade));
         CurrentStage = Mathf.Min(MaxStage, CurrentStage + 1);
         StageStartScore = ScoreTracker.CurrentScore;
+        // Between stages we wipe bullets/enemies and park the player back at the starting mark.
         StageSoftReset.ResetForNextStage();
-        GameFlowManager.ResumeGameplayAfterUpgrade();
+        GameFlowManager.ShowStageStoryBlurb();
         ChoicesChanged?.Invoke();
     }
 
@@ -79,6 +82,7 @@ public static class StageProgression
 
         LivesRemaining--;
         StageStartScore = ScoreTracker.CurrentScore;
+        // A lost life restarts the current fight, not the whole war.
         StageSoftReset.ResetForNextStage();
         ChoicesChanged?.Invoke();
         return true;
@@ -100,6 +104,7 @@ public static class StageSoftReset
 {
     public static void ResetForNextStage()
     {
+        // Clear the stage clutter so old bullets do not follow the player into the next scene beat.
         EnemyAI.DestroyAllActiveEnemies();
         BulletPewPew.DestroyAllActiveBullets();
 
@@ -157,6 +162,7 @@ public class StageProgressionDirector : MonoBehaviour
 
     private void ApplyStageVisuals()
     {
+        // Backgrounds are just the sprite renderers tucked behind the action with sortingOrder -1.
         SpriteRenderer[] renderers = FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None);
         for (int i = 0; i < renderers.Length; i++)
         {

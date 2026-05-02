@@ -25,6 +25,7 @@ public class AllyPlane : MonoBehaviour
 
     public void Initialize(PlayerMovement owner, Vector3 offset)
     {
+        // Allies are basically remote wingmen glued to a formation slot behind the player.
         player = owner;
         formationOffset = offset;
         currentHealth = GetMaxHealth();
@@ -48,6 +49,7 @@ public class AllyPlane : MonoBehaviour
         if (!GameFlowManager.IsGameplayActive || player == null)
             return;
 
+        // They are independent enough to shoot, but not independent enough to make life choices.
         TryFireAtNearestEnemy();
 
         float maxHealth = GetMaxHealth();
@@ -63,6 +65,7 @@ public class AllyPlane : MonoBehaviour
     {
         if (!GameFlowManager.IsGameplayActive || player == null)
         {
+            // Drift down gently while the player is reading menus or between stages.
             rb.linearVelocity *= 0.98f;
             rb.angularVelocity *= 0.98f;
             return;
@@ -70,6 +73,7 @@ public class AllyPlane : MonoBehaviour
 
         Vector3 targetPosition = ClampToCameraView(player.transform.TransformPoint(formationOffset));
         targetPosition = ClampToWorldBounds(targetPosition);
+        // Formation flying by acceleration keeps them lively instead of perfectly nailed to the player.
         Vector2 toTarget = targetPosition - transform.position;
         rb.linearVelocity += toTarget.normalized * (followAcceleration * Time.fixedDeltaTime);
         rb.linearVelocity += Vector2.down * gravityAcceleration * Time.fixedDeltaTime;
@@ -91,6 +95,7 @@ public class AllyPlane : MonoBehaviour
         if (Time.time < lastHitTime + contactInvulnerability)
             return;
 
+        // Allies can take a few hits, but they are absolutely not main-character material.
         lastHitTime = Time.time;
         lastCombatActionTime = Time.time;
         currentHealth = Mathf.Max(0f, currentHealth - damage);
@@ -108,6 +113,7 @@ public class AllyPlane : MonoBehaviour
         if (target == null)
             return;
 
+        // Wingmen pick the closest target and add a little spread so they feel less robotic.
         Vector2 fireDirection = ((Vector2)target.transform.position - (Vector2)transform.position).normalized;
         fireDirection = Quaternion.Euler(0f, 0f, Random.Range(-fireSpreadAngle, fireSpreadAngle)) * fireDirection;
 
@@ -119,6 +125,7 @@ public class AllyPlane : MonoBehaviour
         bullet.ConfigureHoming(player.EffectiveBulletHomingStrength, true);
         bullet.Initialize(fireDirection, Vector2.zero, gameObject, player.EffectiveBulletSpeed);
 
+        GameAudio.PlaySquadronGun();
         nextFireTime = Time.time + (player.UsesMissiles ? 1.1f : fireCooldown);
         lastCombatActionTime = Time.time;
     }
@@ -127,6 +134,7 @@ public class AllyPlane : MonoBehaviour
     {
         if (player != null && player.UsesMissiles)
         {
+            // Squadron inherits missile mode too. Experimental tech, shared irresponsibly.
             return BulletPewPew.CreateRuntimeBullet(
                 "AllyMissile",
                 new Color(1f, 0.5f, 0.2f, 1f),
@@ -152,6 +160,7 @@ public class AllyPlane : MonoBehaviour
 
     private EnemyAI FindNearestEnemy()
     {
+        // This is brute-force and fine for the current enemy counts. No need to summon a targeting system yet.
         EnemyAI[] enemies = FindObjectsByType<EnemyAI>(FindObjectsSortMode.None);
         EnemyAI bestEnemy = null;
         float bestDistanceSqr = float.PositiveInfinity;
@@ -183,6 +192,7 @@ public class AllyPlane : MonoBehaviour
         if (camera == null || !camera.orthographic)
             return targetPosition;
 
+        // Keep wingmen visible. Off-screen allies are not heroic, just confusing.
         float halfHeight = camera.orthographicSize;
         float halfWidth = halfHeight * camera.aspect;
         Vector3 cameraPosition = camera.transform.position;
@@ -226,6 +236,7 @@ public static class SquadronManager
 {
     public static void RefreshSquadron()
     {
+        // Rebuild instead of trying to patch the formation. Cleaner, and the squadron is tiny.
         DestroySquadron();
 
         if (!UpgradeSystem.HasUpgrade(PlayerUpgrade.Squadron))
@@ -251,6 +262,7 @@ public static class SquadronManager
 
     private static void CreateAlly(PlayerMovement player, Vector3 offset, int index)
     {
+        // Runtime-built allies match the rest of this prototype: practical first, fancy later.
         GameObject allyObject = new GameObject($"SquadronAlly_{index}");
         allyObject.transform.position = player.transform.TransformPoint(offset);
         allyObject.transform.rotation = player.transform.rotation;

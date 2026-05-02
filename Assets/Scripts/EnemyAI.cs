@@ -8,14 +8,17 @@ public class EnemyAI : MonoBehaviour
         Fighter,
         SpreadShooter,
         Ace,
-        Boss
+        Boss,
+        BossFighter,
+        BossSpreadShooter,
+        BossAce
     }
 
     private static EnemyAI spawnTemplate;
     private static int activeEnemyCount;
+    private static int activeBossCount;
     private static bool isMakingTemplate;
     private static bool bossSpawned;
-    private static bool bossAlive;
 
     [Header("Variant")]
     [SerializeField] private EnemyVariant variant = EnemyVariant.Fighter;
@@ -61,9 +64,11 @@ public class EnemyAI : MonoBehaviour
     private int strafeDirection = 1;
     private float nextStrafeDirectionChangeTime;
     private float lateralWobbleOffset;
+    private bool bossSpawnReported;
+    private bool bossDefeatReported;
 
     public static int ActiveEnemyCount => activeEnemyCount;
-    public static bool BossAlive => bossAlive;
+    public static bool BossAlive => activeBossCount > 0;
     public static bool BossSpawned => bossSpawned;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -71,9 +76,9 @@ public class EnemyAI : MonoBehaviour
     {
         spawnTemplate = null;
         activeEnemyCount = 0;
+        activeBossCount = 0;
         isMakingTemplate = false;
         bossSpawned = false;
-        bossAlive = false;
         initialWaveSpawned = false;
     }
 
@@ -85,20 +90,18 @@ public class EnemyAI : MonoBehaviour
 
         ApplyVariantSprite();
 
-        // Presets for enemy clases
+        // Each variant rewrites these inspector defaults. The enum is basically the enemy's job title.
         ApplyVariantPreset();
         ConfigureStrafeMovement();
 
+        // One hidden template handles runtime spawning so we do not need hand-built prefabs yet.
         EnsureSpawnTemplateExists();
 
         if (!isMakingTemplate)
             activeEnemyCount++;
 
-        if (variant == EnemyVariant.Boss && !isMakingTemplate)
-        {
-            bossSpawned = true;
-            bossAlive = true;
-        }
+        if (IsBossVariant(variant) && !isMakingTemplate)
+            RegisterBossSpawned();
     }
 
     private void Start()
@@ -111,7 +114,7 @@ public class EnemyAI : MonoBehaviour
     {
         if (!GameFlowManager.IsGameplayActive)
         {
-            // Enemies should stop pretty qucik when gameplay ends
+            // When gameplay pauses, enemies coast down instead of freezing mid-lunge.
             rb.linearVelocity *= 0.95f;
             return;
         }
@@ -130,9 +133,9 @@ public class EnemyAI : MonoBehaviour
         float distanceError = distanceToPlayer - preferredDistance;
         Vector2 desiredVelocity;
 
-        if (variant == EnemyVariant.Boss)
+        if (IsBossVariant(variant))
         {
-            // Bosses should feel heavy and direct instead of drifting like UFO fighters.
+            // Bosses are big blunt instruments. They chase range instead of doing the UFO slide.
             var moveDirection = Mathf.Abs(distanceError) < 3f ? 0f : Mathf.Sign(distanceError);
             desiredVelocity = aim * (moveSpeed * moveDirection);
         }
@@ -140,7 +143,7 @@ public class EnemyAI : MonoBehaviour
         {
             MaybeChangeStrafeDirection();
 
-            // Slide laterally like a UFO while softly correcting back toward a comfortable range.
+            // Regular enemies slide around like smug little UFOs while correcting back to firing range.
             Vector2 lateralDirection = new Vector2(-aim.y, aim.x) * strafeDirection;
             float wobble = Mathf.Sin((Time.time + lateralWobbleOffset) * lateralWobbleFrequency) * lateralWobbleStrength;
             float radialSpeed = Mathf.Clamp(distanceError * radialCorrectionStrength, -moveSpeed, moveSpeed);
@@ -169,8 +172,10 @@ public class EnemyAI : MonoBehaviour
         {
             isDead = true;
             ScoreTracker.Add(scoreValue);
-            if (variant == EnemyVariant.Boss)
-                StageProgression.HandleBossDestroyed();
+            GameAudio.PlayEnemyDeath();
+            // Bosses report into stage progression; regular enemies just cash out score and vanish.
+            if (IsBossVariant(variant))
+                ReportBossDefeated();
             Destroy(gameObject);
         }
     }
@@ -180,8 +185,8 @@ public class EnemyAI : MonoBehaviour
         if (gameObject.scene.IsValid())
             activeEnemyCount = Mathf.Max(0, activeEnemyCount - 1);
 
-        if (variant == EnemyVariant.Boss && gameObject.scene.IsValid())
-            bossAlive = false;
+        if (IsBossVariant(variant) && gameObject.scene.IsValid() && bossSpawnReported && !bossDefeatReported)
+            activeBossCount = Mathf.Max(0, activeBossCount - 1);
     }
 
     private void OnCollisionEnter2D(Collision2D collision)
@@ -201,7 +206,7 @@ public class EnemyAI : MonoBehaviour
             ally.TakeHit();
         }
 
-        if (variant != EnemyVariant.Boss)
+        if (!IsBossVariant(variant))
             Destroy(gameObject);
     }
 
@@ -216,7 +221,7 @@ public class EnemyAI : MonoBehaviour
 
         ally.TakeHit();
 
-        if (variant != EnemyVariant.Boss)
+        if (!IsBossVariant(variant))
             Destroy(gameObject);
     }
 
@@ -224,6 +229,7 @@ public class EnemyAI : MonoBehaviour
     {
         if (skipInitialWaveSpawn || initialWaveSpawned || player == null) return;
 
+        // The scene enemy becomes the seed for the first wave, then the template handles reinforcements.
         initialWaveSpawned = true;
         transform.position = GetSpawnPosition();
 
@@ -242,7 +248,7 @@ public class EnemyAI : MonoBehaviour
         if (isMakingTemplate || spawnTemplate != null)
             return;
 
-        // Spawning template that hopefully will work eventually
+        // Hide one cloned enemy offstage and use it as the factory for every runtime spawn.
         isMakingTemplate = true;
         spawnTemplate = Instantiate(this);
         spawnTemplate.gameObject.name = "EnemySpawnTemplate";
@@ -258,7 +264,7 @@ public class EnemyAI : MonoBehaviour
     {
         var spawnPoint = transform.position + transform.up * bulletSpawnOffset;
 
-        if (variant == EnemyVariant.Boss)
+        if (IsBossVariant(variant))
         {
             FireBossPattern(direction, spawnPoint);
             nextFireTime = Time.time + fireCooldown;
@@ -323,8 +329,8 @@ public class EnemyAI : MonoBehaviour
         }
 
         activeEnemyCount = 0;
+        activeBossCount = 0;
         bossSpawned = false;
-        bossAlive = false;
     }
 
     public static bool TrySpawnBoss(Transform playerTransform)
@@ -332,8 +338,17 @@ public class EnemyAI : MonoBehaviour
         if (spawnTemplate == null || playerTransform == null || bossSpawned)
             return false;
 
+        if (StageProgression.CurrentStage >= StageProgression.MaxStage)
+        {
+            // Final stage is the boss reunion tour. Rude, but dramatic.
+            spawnTemplate.SpawnStageFourBosses(playerTransform);
+            bossSpawned = true;
+            return true;
+        }
+
         Vector2 spawnPosition = spawnTemplate.GetSpawnPositionFor(playerTransform);
-        spawnTemplate.SpawnEnemyAt(spawnPosition, EnemyVariant.Boss);
+        spawnTemplate.SpawnEnemyAt(spawnPosition, GetBossVariantForStage(StageProgression.CurrentStage));
+        bossSpawned = true;
         return true;
     }
 
@@ -347,6 +362,12 @@ public class EnemyAI : MonoBehaviour
         EnemyAI clone = Instantiate(this, spawnPosition, Quaternion.identity);
         clone.variant = spawnVariant;
         clone.skipInitialWaveSpawn = true;
+        // Variant is assigned after Instantiate, so reapply art/stats or every clone acts like its parent.
+        clone.ApplyVariantSprite();
+        clone.ApplyVariantPreset();
+        clone.ConfigureStrafeMovement();
+        if (IsBossVariant(spawnVariant))
+            clone.RegisterBossSpawned();
         clone.enabled = true;
         clone.gameObject.SetActive(true);
         return clone;
@@ -357,7 +378,7 @@ public class EnemyAI : MonoBehaviour
         var boundsCollider = ResolveSpawnBounds();
         Vector2 fallback = playerTransform.position;
 
-        // Should make enemys spawn in a ring rather than right ontop of the player initially
+        // Spawn in a loose ring so enemies arrive from danger-space, not directly on the player's lap.
         for (int attempt = 0; attempt < 24; attempt++)
         {
             var angle = Random.Range(0f, Mathf.PI * 2f);
@@ -374,6 +395,68 @@ public class EnemyAI : MonoBehaviour
         }
 
         return fallback;
+    }
+
+    private void SpawnStageFourBosses(Transform playerTransform)
+    {
+        // Three flavors of bad news, spaced out a bit so they do not spawn as one mega-lump.
+        EnemyVariant[] finalBosses =
+        {
+            EnemyVariant.BossFighter,
+            EnemyVariant.BossSpreadShooter,
+            EnemyVariant.BossAce
+        };
+
+        for (int i = 0; i < finalBosses.Length; i++)
+        {
+            Vector2 spawnPosition = GetSpawnPositionFor(playerTransform);
+            Vector3 offset = Quaternion.Euler(0f, 0f, i * 120f) * Vector3.up * 22f;
+            spawnPosition += (Vector2)offset;
+            SpawnEnemyAt(spawnPosition, finalBosses[i]);
+        }
+    }
+
+    private void RegisterBossSpawned()
+    {
+        if (bossSpawnReported)
+            return;
+
+        // Track boss count, not just a bool, because stage four has multiple bosses alive together.
+        bossSpawnReported = true;
+        activeBossCount++;
+        bossSpawned = true;
+        bossDefeatReported = false;
+    }
+
+    private void ReportBossDefeated()
+    {
+        if (bossDefeatReported)
+            return;
+
+        bossDefeatReported = true;
+        activeBossCount = Mathf.Max(0, activeBossCount - 1);
+        // Only the last boss death gets to advance the stage. Teamwork, but evil.
+        if (activeBossCount <= 0)
+            StageProgression.HandleBossDestroyed();
+    }
+
+    private static bool IsBossVariant(EnemyVariant enemyVariant)
+    {
+        return enemyVariant == EnemyVariant.Boss
+            || enemyVariant == EnemyVariant.BossFighter
+            || enemyVariant == EnemyVariant.BossSpreadShooter
+            || enemyVariant == EnemyVariant.BossAce;
+    }
+
+    private static EnemyVariant GetBossVariantForStage(int stage)
+    {
+        return stage switch
+        {
+            1 => EnemyVariant.BossFighter,
+            2 => EnemyVariant.BossSpreadShooter,
+            3 => EnemyVariant.BossAce,
+            _ => EnemyVariant.Boss
+        };
     }
 
     private static BoxCollider2D ResolveSpawnBounds()
@@ -438,7 +521,7 @@ public class EnemyAI : MonoBehaviour
                 TintSprite(Color.white);
                 break;
 
-            case EnemyVariant.Boss:
+            case EnemyVariant.BossFighter:
                 moveSpeed = 30f;
                 turnSpeed = 180f;
                 preferredDistance = 20f;
@@ -459,6 +542,78 @@ public class EnemyAI : MonoBehaviour
                 multiShotSpacing = 2f;
                 scoreValue = 2000;
                 transform.localScale = new Vector3(15f, 24f, 1f);
+                TintSprite(new Color(1f, 0.96f, 0.9f, 1f));
+                break;
+
+            case EnemyVariant.BossSpreadShooter:
+                moveSpeed = 22f;
+                turnSpeed = 140f;
+                preferredDistance = 42f;
+                lateralSpeed = 14f;
+                radialCorrectionStrength = 0.45f;
+                strafeDirectionChangeInterval = 6f;
+                lateralWobbleStrength = 0.8f;
+                lateralWobbleFrequency = 0.6f;
+                gravityAcceleration = 4.5f;
+                separationRadius = 36f;
+                separationStrength = 22f;
+                hitPoints = 74;
+                bulletSpeed = 125f;
+                fireCooldown = 0.68f;
+                fireStartDelay = 1.3f;
+                bulletSpreadAngle = 4f;
+                bulletsPerShot = 5;
+                multiShotSpacing = 12f;
+                scoreValue = 2400;
+                transform.localScale = new Vector3(17f, 17f, 1f);
+                TintSprite(new Color(0.7f, 1f, 0.82f, 1f));
+                break;
+
+            case EnemyVariant.BossAce:
+                moveSpeed = 52f;
+                turnSpeed = 520f;
+                preferredDistance = 12f;
+                lateralSpeed = 38f;
+                radialCorrectionStrength = 1.25f;
+                strafeDirectionChangeInterval = 2.4f;
+                lateralWobbleStrength = 2.2f;
+                lateralWobbleFrequency = 1.4f;
+                gravityAcceleration = 6f;
+                separationRadius = 34f;
+                separationStrength = 36f;
+                hitPoints = 54;
+                bulletSpeed = 170f;
+                fireCooldown = 0.22f;
+                fireStartDelay = 1f;
+                bulletSpreadAngle = 7f;
+                bulletsPerShot = 1;
+                multiShotSpacing = 0f;
+                scoreValue = 2800;
+                transform.localScale = new Vector3(13f, 13f, 1f);
+                TintSprite(new Color(1f, 0.78f, 1f, 1f));
+                break;
+
+            case EnemyVariant.Boss:
+                moveSpeed = 28f;
+                turnSpeed = 180f;
+                preferredDistance = 24f;
+                lateralSpeed = 16f;
+                radialCorrectionStrength = 0.7f;
+                strafeDirectionChangeInterval = 5f;
+                lateralWobbleStrength = 0f;
+                lateralWobbleFrequency = 0f;
+                gravityAcceleration = 4f;
+                separationRadius = 30f;
+                separationStrength = 18f;
+                hitPoints = 70;
+                bulletSpeed = 150f;
+                fireCooldown = 0.4f;
+                fireStartDelay = 1.5f;
+                bulletSpreadAngle = 2f;
+                bulletsPerShot = 2;
+                multiShotSpacing = 8f;
+                scoreValue = 2000;
+                transform.localScale = new Vector3(15f, 20f, 1f);
                 TintSprite(Color.white);
                 break;
 
@@ -492,6 +647,7 @@ public class EnemyAI : MonoBehaviour
 
     private void ConfigureStrafeMovement()
     {
+        // Randomize the wiggle so spawned enemies do not fly like synchronized swimmers.
         strafeDirection = Random.value < 0.5f ? -1 : 1;
         lateralWobbleOffset = Random.Range(0f, Mathf.PI * 2f);
         nextStrafeDirectionChangeTime = Time.time + Random.Range(
@@ -515,6 +671,7 @@ public class EnemyAI : MonoBehaviour
         if (separationRadius <= 0f || separationStrength <= 0f)
             return Vector2.zero;
 
+        // Basic crowd control: enemies nudge away from each other instead of stacking into one blob.
         Vector2 separation = Vector2.zero;
         Collider2D[] nearbyColliders = Physics2D.OverlapCircleAll(transform.position, separationRadius);
 
@@ -551,6 +708,9 @@ public class EnemyAI : MonoBehaviour
         {
             EnemyVariant.SpreadShooter => GameSpriteLibrary.GetEnemySpreadShooterSprite(),
             EnemyVariant.Ace => GameSpriteLibrary.GetEnemyAceSprite(),
+            EnemyVariant.BossFighter => GameSpriteLibrary.GetEnemyBossSprite(),
+            EnemyVariant.BossSpreadShooter => GameSpriteLibrary.GetEnemySpreadShooterSprite(),
+            EnemyVariant.BossAce => GameSpriteLibrary.GetEnemyAceSprite(),
             EnemyVariant.Boss => GameSpriteLibrary.GetEnemyBossSprite(),
             _ => GameSpriteLibrary.GetEnemyFighterSprite()
         };
@@ -582,7 +742,7 @@ public class EnemyAI : MonoBehaviour
             return;
 
         Vector2 spriteSize = sprite.bounds.size;
-        if (variant == EnemyVariant.Boss)
+        if (IsBossVariant(variant))
         {
             boxCollider.size = new Vector2(spriteSize.x * 0.62f, spriteSize.y * 0.82f);
             boxCollider.offset = new Vector2(0f, spriteSize.y * 0.03f);
@@ -601,7 +761,7 @@ public class EnemyAI : MonoBehaviour
         int spreadChance = score >= 300 ? 45 : 0;
         var roll = Random.Range(0, 100);
 
-        // Should in theory make the higher level enemies spawn with higher score
+        // Higher score means command is done being polite and starts sending nastier ships.
         if (roll < aceChance)
             return EnemyVariant.Ace;
 
@@ -613,7 +773,34 @@ public class EnemyAI : MonoBehaviour
 
     private void FireBossPattern(Vector2 direction, Vector3 spawnPoint)
     {
-        // Just makes ther boss fire in a pattern mimicking the other enemies
+        if (variant == EnemyVariant.BossSpreadShooter)
+        {
+            // Spread boss owns the screen by volume. Subtlety was not in the briefing.
+            FirePattern(direction, spawnPoint, 5, 13f, bulletSpeed, 1.05f, new Color(0.4f, 1f, 0.55f, 1f));
+            attackPatternIndex++;
+            return;
+        }
+
+        if (variant == EnemyVariant.BossAce)
+        {
+            // Ace boss fires fewer shots, but fast enough to make dodging feel personal.
+            int shotCount = attackPatternIndex % 4 == 0 ? 3 : 1;
+            float spacing = shotCount > 1 ? 8f : 0f;
+            FirePattern(direction, spawnPoint, shotCount, spacing, bulletSpeed, 0.85f, new Color(1f, 0.45f, 1f, 1f));
+            attackPatternIndex++;
+            return;
+        }
+
+        if (variant == EnemyVariant.BossFighter)
+        {
+            // Fighter boss is the classic bruiser: direct, chunky, and very committed.
+            int shotCount = attackPatternIndex % 3 == 0 ? 2 : 1;
+            FirePattern(direction, spawnPoint, shotCount, 9f, bulletSpeed, 1.1f, new Color(1f, 0.5f, 0.2f, 1f));
+            attackPatternIndex++;
+            return;
+        }
+
+        // Fallback boss pattern, mostly here for old scenes or future boss experiments.
         switch (attackPatternIndex % 3)
         {
             case 0:
